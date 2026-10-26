@@ -1,30 +1,42 @@
-from confluent_kafka import Producer
 import json
+import time
+import requests
+from confluent_kafka import Producer
 
-producer_config = {'bootstrap.servers': 'localhost:9092'}
+config = {'bootstrap.servers': 'localhost:9092'}
+producer = Producer(config)
+topic = 'api_stream'
 
-producer = Producer(producer_config)
+# Example public API (CoinDesk Bitcoin Price Index)
+API_URL = "https://coindesk.com"
 
-def delivery_report(err, msg):
-    if err:
-        print(f"Message delivery failed: {err}")
-    else:
-        print(f"Message delivered: {msg.value().decode('utf-8')} to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}")
-        print(f"delivered to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}")
+print("🚀 Starting real-time API ingestion loop...")
 
-order = {
-    "order_id": str(12345),
-    "user_name": "joe",
-    "item": "laptop",
-    "quantity": 1
-}
+try:
+    while True:
+        try:
+            response = requests.get(API_URL, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Extract relevant payload or just forward the whole thing
+                payload = json.dumps(data).encode('utf-8')
+                
+                # Produce to Kafka
+                producer.produce(topic=topic, value=payload)
+                producer.poll(0) # Handle internal delivery callbacks
+                
+                print(f"📡 Dispatched API data to Kafka at {data['time']['updated']}")
+            else:
+                print(f"⚠️ API Error: Status code {response.status_code}")
+                
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Connection error: {e}")
+            
+        # Poll every 5 seconds (adjust based on API limits)
+        time.sleep(5)
 
-value= json.dumps(order).encode('utf-8')
-
-producer.produce(
-    topic='orders',
-    value=value,
-    callback=delivery_report()
-)
-
-producer.flush()
+except KeyboardInterrupt:
+    print("\nStopping API producer...")
+finally:
+    producer.flush()
